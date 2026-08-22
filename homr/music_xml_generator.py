@@ -137,6 +137,7 @@ def build_part(
     is_first_part = index == 0
     for measure in build_measures(args, voice, is_first_part, has_two_staves):
         part.append(measure)
+    convert_ties(part)
     return part
 
 
@@ -408,6 +409,82 @@ def rebalance_measure_voices(measure: ET.Element) -> None:
                 voice_el = note.find("voice")
                 if voice_el is not None:
                     voice_el.text = xml_voice
+
+
+def get_note_pitch(note: ET.Element) -> str | None:
+    pitch = note.find("pitch")
+    if pitch is None:
+        return None
+    return "|".join(pitch.findtext(part, "") for part in ("step", "alter", "octave"))
+
+
+def get_slur(note: ET.Element, slur_type: str) -> tuple[ET.Element, ET.Element] | None:
+    """The note's slur of this type with the notations holding it, if any.
+
+    build_slurs writes at most one start and one stop per note, so there is
+    never a choice to make here.
+    """
+    for notation in note.findall("notations"):
+        for slur in notation.findall("slur"):
+            if slur.get("type") == slur_type:
+                return slur, notation
+    return None
+
+
+def add_tie(note: ET.Element, tie_type: str, notation: ET.Element) -> None:
+    """A tie needs both elements: <tie> for what sounds, <tied> for what is drawn."""
+    tie = ET.Element("tie", type=tie_type)
+    duration = note.find("duration")
+    position = list(note).index(duration) + 1 if duration is not None else 0
+    note.insert(position, tie)
+    notation.insert(0, ET.Element("tied", type=tie_type))
+
+
+def convert_ties(part: ET.Element) -> None:
+    """Rewrite slurs which are really ties, over a whole part.
+
+    The model learns slurs and ties as one class on purpose, so a tie reaches
+    us as a slur. A slur is a tie when it joins a note to the very next note
+    of its own voice and both carry the same pitch.
+
+    Deliberately no attempt to pair slur starts with slur stops. The slur
+    number is the staff number, so several slurs open on one staff share a
+    number and cannot be told apart by it — four at once on a test file — and
+    any pairing rule would be guessing. A tie needs no pairing: it is a
+    property of a note and its immediate successor.
+
+    Run per part rather than per measure, because ties cross barlines.
+    """
+    notes: list[ET.Element] = []
+    for measure in part.findall("measure"):
+        notes.extend(measure.findall("note"))
+
+    successor: dict[int, int] = {}
+    latest: dict[tuple[str, str], int] = {}
+    for index in reversed(range(len(notes))):
+        note = notes[index]
+        key = (note.findtext("staff", "1"), note.findtext("voice", "1"))
+        if key in latest:
+            successor[index] = latest[key]
+        latest[key] = index
+
+    for index, note in enumerate(notes):
+        following = successor.get(index)
+        if following is None:
+            continue
+        pitch = get_note_pitch(note)
+        if pitch is None or pitch != get_note_pitch(notes[following]):
+            continue
+        begins = get_slur(note, "start")
+        ends = get_slur(notes[following], "stop")
+        if begins is None or ends is None:
+            continue
+        begin_slur, begin_notation = begins
+        end_slur, end_notation = ends
+        begin_notation.remove(begin_slur)
+        end_notation.remove(end_slur)
+        add_tie(note, "start", begin_notation)
+        add_tie(notes[following], "stop", end_notation)
 
 
 def build_clef(model_clef: EncodedSymbol, attributes: ET.Element) -> None:
