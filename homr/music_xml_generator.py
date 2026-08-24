@@ -453,38 +453,31 @@ def convert_ties(part: ET.Element) -> None:
     any pairing rule would be guessing. A tie needs no pairing: it is a
     property of a note and its immediate successor.
 
-    Run per part rather than per measure, because ties cross barlines.
+    Run per part rather than per measure, because ties cross barlines. One
+    pass is enough: the last note seen in a voice is by definition the
+    predecessor of the next one in it.
     """
-    notes: list[ET.Element] = []
+    previous: dict[tuple[str, str], ET.Element] = {}
     for measure in part.findall("measure"):
-        notes.extend(measure.findall("note"))
-
-    successor: dict[int, int] = {}
-    latest: dict[tuple[str, str], int] = {}
-    for index in reversed(range(len(notes))):
-        note = notes[index]
-        key = (note.findtext("staff", "1"), note.findtext("voice", "1"))
-        if key in latest:
-            successor[index] = latest[key]
-        latest[key] = index
-
-    for index, note in enumerate(notes):
-        following = successor.get(index)
-        if following is None:
-            continue
-        pitch = get_note_pitch(note)
-        if pitch is None or pitch != get_note_pitch(notes[following]):
-            continue
-        begins = get_slur(note, "start")
-        ends = get_slur(notes[following], "stop")
-        if begins is None or ends is None:
-            continue
-        begin_slur, begin_notation = begins
-        end_slur, end_notation = ends
-        begin_notation.remove(begin_slur)
-        end_notation.remove(end_slur)
-        add_tie(note, "start", begin_notation)
-        add_tie(notes[following], "stop", end_notation)
+        for note in measure.findall("note"):
+            key = (note.findtext("staff", "1"), note.findtext("voice", "1"))
+            before = previous.get(key)
+            previous[key] = note
+            if before is None:
+                continue
+            pitch = get_note_pitch(before)
+            if pitch is None or pitch != get_note_pitch(note):
+                continue
+            begins = get_slur(before, "start")
+            ends = get_slur(note, "stop")
+            if begins is None or ends is None:
+                continue
+            begin_slur, begin_notation = begins
+            end_slur, end_notation = ends
+            begin_notation.remove(begin_slur)
+            end_notation.remove(end_slur)
+            add_tie(before, "start", begin_notation)
+            add_tie(note, "stop", end_notation)
 
 
 def build_clef(model_clef: EncodedSymbol, attributes: ET.Element) -> None:
