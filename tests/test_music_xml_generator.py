@@ -282,6 +282,42 @@ barline . . . . ."""
         self.assertEqual(_slurs(xml), ["start", "stop"])
         self.assertEqual(_ties(xml), [])
 
+    def test_phrase_slur_over_three_events_stays_a_slur(self) -> None:
+        """Adjacency is what separates a tie from a phrase mark.
+
+        A curve that leaves a pitch and comes back to it later is a phrase,
+        however identical its two ends are, so only the immediately following
+        event may close a tie.
+        """
+        phrase = """clef_G2 . . . . upper
+timeSignature/4 . . . . .
+note_4 C4 _ _ _ upper&note_4 G4 _ _ slurStart upper
+note_4 A4 _ _ _ upper
+note_4 C4 _ _ _ upper&note_4 G4 _ _ slurStop upper
+barline . . . . ."""
+        tokens = read_token_lines(phrase.splitlines())
+        xml = generate_xml(XmlGeneratorArguments(), [tokens], "")
+
+        self.assertEqual(_slurs(xml), ["start", "stop"])
+        self.assertEqual(_ties(xml), [])
+
+    def test_shared_pitch_without_a_slur_of_its_own_stays_untied(self) -> None:
+        """A pitch in both chords is not enough; the curve has to be on it.
+
+        Here C4 is in both chords and the curve runs from G4 to C4, so nothing
+        ties: G4 has no stop to reach, and C4 has no start behind it.
+        """
+        crossing = """clef_G2 . . . . upper
+timeSignature/4 . . . . .
+note_4 C4 _ _ _ upper&note_4 G4 _ _ slurStart upper
+note_4 C4 _ _ slurStop upper&note_4 A4 _ _ _ upper
+barline . . . . ."""
+        tokens = read_token_lines(crossing.splitlines())
+        xml = generate_xml(XmlGeneratorArguments(), [tokens], "")
+
+        self.assertEqual(_slurs(xml), ["start", "stop"])
+        self.assertEqual(_ties(xml), [])
+
     def test_slur_between_different_pitches_stays_a_slur(self) -> None:
         phrase = """clef_G2 . . . . upper
 timeSignature/4 . . . . .
