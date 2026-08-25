@@ -237,6 +237,51 @@ barline . . . . ."""
         # the slur it came from is gone
         self.assertEqual(_slurs(xml), [])
 
+    def test_tie_between_two_chords(self) -> None:
+        """Every notehead of a chord ties to its own pitch in the next one."""
+        chords = """clef_G2 . . . . upper
+timeSignature/4 . . . . .
+note_4 C4 _ _ slurStart upper&note_4 E4 _ _ slurStart upper
+note_4 C4 _ _ slurStop upper&note_4 E4 _ _ slurStop upper
+barline . . . . ."""
+        tokens = read_token_lines(chords.splitlines())
+        xml = generate_xml(XmlGeneratorArguments(), [tokens], "")
+
+        self.assertEqual(sorted(_ties(xml)), ["start", "start", "stop", "stop"])
+        self.assertEqual(_slurs(xml), [])
+
+    def test_tie_on_one_notehead_of_a_chord(self) -> None:
+        """The model marks the notehead the curve touches, not the whole chord.
+
+        On real output almost every slurred chord carries the slur on some of
+        its members only, so a tie has to be found for that pitch alone and
+        leave the rest of the chord as it is.
+        """
+        chords = """clef_G2 . . . . upper
+timeSignature/4 . . . . .
+note_4 C4 _ _ _ upper&note_4 E4 _ _ slurStart upper
+note_4 C4 _ _ _ upper&note_4 E4 _ _ slurStop upper
+barline . . . . ."""
+        tokens = read_token_lines(chords.splitlines())
+        xml = generate_xml(XmlGeneratorArguments(), [tokens], "")
+
+        self.assertEqual(_ties(xml), ["start", "stop"])
+        self.assertEqual(_slurs(xml), [])
+        tied = [n for n in xml.iter("note") if n.find("tie") is not None]
+        self.assertEqual([_pitch(n) for n in tied], ["E", "E"])
+
+    def test_slur_from_a_chord_to_a_different_pitch_stays_a_slur(self) -> None:
+        chords = """clef_G2 . . . . upper
+timeSignature/4 . . . . .
+note_4 C4 _ _ _ upper&note_4 E4 _ _ slurStart upper
+note_4 C4 _ _ _ upper&note_4 G4 _ _ slurStop upper
+barline . . . . ."""
+        tokens = read_token_lines(chords.splitlines())
+        xml = generate_xml(XmlGeneratorArguments(), [tokens], "")
+
+        self.assertEqual(_slurs(xml), ["start", "stop"])
+        self.assertEqual(_ties(xml), [])
+
     def test_slur_between_different_pitches_stays_a_slur(self) -> None:
         phrase = """clef_G2 . . . . upper
 timeSignature/4 . . . . .

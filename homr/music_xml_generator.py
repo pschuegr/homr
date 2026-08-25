@@ -454,30 +454,67 @@ def convert_ties(part: ET.Element) -> None:
     property of a note and its immediate successor.
 
     Run per part rather than per measure, because ties cross barlines. One
-    pass is enough: the last note seen in a voice is by definition the
+    pass is enough: the last event seen in a voice is by definition the
     predecessor of the next one in it.
     """
-    previous: dict[tuple[str, str], ET.Element] = {}
+    previous: dict[tuple[str, str], list[ET.Element]] = {}
     for measure in part.findall("measure"):
-        for note in measure.findall("note"):
-            key = (note.findtext("staff", "1"), note.findtext("voice", "1"))
+        for event in group_into_events(measure):
+            first = event[0]
+            key = (first.findtext("staff", "1"), first.findtext("voice", "1"))
             before = previous.get(key)
-            previous[key] = note
+            previous[key] = event
             if before is None:
                 continue
-            pitch = get_note_pitch(before)
-            if pitch is None or pitch != get_note_pitch(note):
+            tie_event(before, event)
+
+
+def group_into_events(measure: ET.Element) -> list[list[ET.Element]]:
+    """The measure's notes, with each chord kept together as one event.
+
+    A chord is one moment of the music, not several: <chord> means "sounds
+    with the note before". Walking notes one at a time makes a chord's own
+    members each other's neighbours, so nothing in a chord ever finds the note
+    it is really adjacent to, and no tie between two chords is ever seen.
+    """
+    events: list[list[ET.Element]] = []
+    for note in measure.findall("note"):
+        if note.find("chord") is not None and events:
+            events[-1].append(note)
+        else:
+            events.append([note])
+    return events
+
+
+def tie_event(before: list[ET.Element], after: list[ET.Element]) -> None:
+    """Convert every slur between two adjacent events that is really a tie.
+
+    Matched by pitch, and led by the slurs: the model marks the notehead the
+    curve touches, which on a chord is one member and not the whole thing -
+    of the chords carrying a slur on my test material, 25 of 26 had it on
+    some members only. So each slurred note looks for its own pitch in the
+    next event rather than the chord being taken as a whole.
+    """
+    for start_note in before:
+        begins = get_slur(start_note, "start")
+        if begins is None:
+            continue
+        pitch = get_note_pitch(start_note)
+        if pitch is None:
+            continue
+        for stop_note in after:
+            if get_note_pitch(stop_note) != pitch:
                 continue
-            begins = get_slur(before, "start")
-            ends = get_slur(note, "stop")
-            if begins is None or ends is None:
+            ends = get_slur(stop_note, "stop")
+            if ends is None:
                 continue
             begin_slur, begin_notation = begins
             end_slur, end_notation = ends
             begin_notation.remove(begin_slur)
             end_notation.remove(end_slur)
-            add_tie(before, "start", begin_notation)
-            add_tie(note, "stop", end_notation)
+            add_tie(start_note, "start", begin_notation)
+            add_tie(stop_note, "stop", end_notation)
+            break
 
 
 def build_clef(model_clef: EncodedSymbol, attributes: ET.Element) -> None:
